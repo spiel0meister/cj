@@ -3,49 +3,38 @@
 #define CJ_IMPLEMENTATION
 #include "cj.h"
 
-typedef struct Node Node;
-struct Node {
-    int value;
-    Node* left;
-    Node* right;
-};
+typedef struct {
+    const char* name;
+    int age;
+}Person;
 
-Node* random_tree(size_t depth) {
-    if (depth == 0) return NULL;
-    Node* node = malloc(sizeof(*node));
-    node->value = rand() % depth;
-    node->left = random_tree(depth - 1);
-    node->right = random_tree(depth - 1);
-    return node;
-}
-
-void dump_tree(CJ* cj, Node* node) {
-    if (node != NULL) {
+void dump_people(CJ* cj, size_t n, Person people[n]) {
+    cj_begin_array(cj);
+    for (size_t i = 0; i < n; i++) {
         cj_begin_object(cj);
 
-        cj_key(cj, "value");
-        cj_number(cj, node->value);
+        cj_key(cj, "name");
+        cj_string(cj, people[i].name);
 
-        cj_key(cj, "left");
-        dump_tree(cj, node->left);
-
-        cj_key(cj, "right");
-        dump_tree(cj, node->right);
+        cj_key(cj, "age");
+        cj_number(cj, people[i].age);
 
         cj_end_object(cj);
-    } else {
-        cj_null(cj);
     }
+    cj_end_array(cj);
 }
 
 int main(void) {
-    CJ* cj = cj_new(stdout);
+    CJ* cj = cj_new(stdout, (CJ_write_t) fprintf);
 
-    Node* tree = random_tree(5);
+    Person people[] = {
+        { "Joe", 12 },
+        { "Urmom", 122 },
+        { "John", 22 },
+    };
 
-    dump_tree(cj, tree);
+    dump_people(cj, 3, people);
 
     cj_delete(cj);
-
     return 0;
 }

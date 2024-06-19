@@ -26,18 +26,19 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+typedef void (*CJ_write_t)(FILE* sink, const char* fmt, ...);
 typedef struct CJ CJ;
 
 #ifndef CJ_MAX_SCOPES
     #define CJ_MAX_SCOPES 256
 #endif
 
-CJ* cj_new(FILE* sink);
+CJ* cj_new(FILE* sink, CJ_write_t write);
 void cj_delete(CJ* cj);
 
 void cj_begin_object(CJ* cj);
 void cj_end_object(CJ* cj);
-void cj_start_array(CJ* cj);
+void cj_begin_array(CJ* cj);
 void cj_end_array(CJ* cj);
 
 void cj_key(CJ* cj, const char* cstr);
@@ -66,21 +67,23 @@ typedef struct {
     bool key;
 }CJScope;
 
-typedef struct CJ {
+struct CJ {
     FILE* sink;
+    CJ_write_t write;
 
     CJScope scopes[CJ_MAX_SCOPES];
     size_t scope_count;
-}CJ;
+};
 
 static CJScope* cj_scope_top(CJ* cj) {
     assert(cj->scope_count > 0);
     return &cj->scopes[cj->scope_count - 1];
 }
 
-CJ* cj_new(FILE* sink) {
+CJ* cj_new(FILE* sink, CJ_write_t write) {
     CJ* cj = calloc(1, sizeof(*cj));
     cj->sink = sink;
+    cj->write = write;
     return cj;
 }
 
@@ -90,16 +93,27 @@ void cj_delete(CJ* cj) {
 
 void cj_begin_object(CJ* cj) {
     assert(cj->scope_count < CJ_MAX_SCOPES);
+    
+    if (cj->scope_count > 0) {
+        CJScope* top = cj_scope_top(cj);
+        if (top->type == CJ_OBJECT) assert(top->key);
+        else if (top->type == CJ_ARRAY) {
+            if (!top->start) cj->write(cj->sink, ",");
+            else top->start = false;
+        }
+        else assert(0);
+    }
 
-    fprintf(cj->sink, "{");
+    cj->write(cj->sink, "{");
     cj->scopes[cj->scope_count++] = (CJScope) { .type = CJ_OBJECT, .start = true, .key = false };
 }
 
 void cj_end_object(CJ* cj) {
     CJScope* top = cj_scope_top(cj);
     assert(top->type == CJ_OBJECT);
+    cj->scope_count--;
 
-    fprintf(cj->sink, "}");
+    cj->write(cj->sink, "}");
 
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
@@ -109,18 +123,29 @@ void cj_end_object(CJ* cj) {
     }
 }
 
-void cj_start_array(CJ* cj) {
+void cj_begin_array(CJ* cj) {
     assert(cj->scope_count < CJ_MAX_SCOPES);
 
-    fprintf(cj->sink, "[");
-    cj->scopes[cj->scope_count++] = (CJScope) { .type = CJ_OBJECT, .start = true, .key = false };
+    if (cj->scope_count > 0) {
+        CJScope* top = cj_scope_top(cj);
+        if (top->type == CJ_OBJECT) assert(top->key);
+        else if (top->type == CJ_ARRAY) {
+            if (!top->start) cj->write(cj->sink, ",");
+            else top->start = false;
+        }
+        else assert(0);
+    }
+
+    cj->write(cj->sink, "[");
+    cj->scopes[cj->scope_count++] = (CJScope) { .type = CJ_ARRAY, .start = true, .key = false };
 }
 
 void cj_end_array(CJ* cj) {
     CJScope* top = cj_scope_top(cj);
     assert(top->type == CJ_ARRAY);
 
-    fprintf(cj->sink, "]");
+    cj->write(cj->sink, "]");
+    cj->scope_count--;
 
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
@@ -136,12 +161,12 @@ void cj_key(CJ* cj, const char* cstr) {
     assert(!top->key);
 
     if (!top->start) {
-        fprintf(cj->sink, ",");
+        cj->write(cj->sink, ",");
     } else {
         top->start = false;
     }
 
-    fprintf(cj->sink, "\"%s\":", cstr);
+    cj->write(cj->sink, "\"%s\":", cstr);
     top->key = true;
 }
 
@@ -151,15 +176,15 @@ void cj_key_sized(CJ* cj, size_t n, const char cstr[n]) {
     assert(!top->key);
 
     if (!top->start) {
-        fprintf(cj->sink, ",");
+        cj->write(cj->sink, ",");
     } else {
         top->start = false;
     }
 
-    fprintf(cj->sink, "\"%.*s\"", (int)n, cstr);
+    cj->write(cj->sink, "\"%.*s\"", (int)n, cstr);
 
     if (top->type == CJ_OBJECT) {
-        fprintf(cj->sink, ":");
+        cj->write(cj->sink, ":");
         top->key = true;
     }
 }
@@ -167,14 +192,18 @@ void cj_key_sized(CJ* cj, size_t n, const char cstr[n]) {
 void cj_bool(CJ* cj, bool bol) {
     CJScope* top = cj_scope_top(cj);
 
-    if (top->type == CJ_ARRAY && !top->start) {
-        fprintf(cj->sink, ",");
+    if (top->type == CJ_ARRAY) {
+        if (!top->start) {
+            cj->write(cj->sink, ",");
+        } else {
+            top->start = false;
+        }
     }
 
     if (bol) {
-        fprintf(cj->sink, "true");
+        cj->write(cj->sink, "true");
     } else {
-        fprintf(cj->sink, "false");
+        cj->write(cj->sink, "false");
     }
 
     if (top->type == CJ_OBJECT) {
@@ -185,11 +214,15 @@ void cj_bool(CJ* cj, bool bol) {
 void cj_string(CJ* cj, const char* cstr) {
     CJScope* top = cj_scope_top(cj);
 
-    if (top->type == CJ_ARRAY && !top->start) {
-        fprintf(cj->sink, ",");
+    if (top->type == CJ_ARRAY) {
+        if (!top->start) {
+            cj->write(cj->sink, ",");
+        } else {
+            top->start = false;
+        }
     }
 
-    fprintf(cj->sink, "\"%s\"", cstr);
+    cj->write(cj->sink, "\"%s\"", cstr);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
@@ -199,11 +232,15 @@ void cj_string(CJ* cj, const char* cstr) {
 void cj_string_sized(CJ* cj, size_t n, const char cstr[n]) {
     CJScope* top = cj_scope_top(cj);
 
-    if (top->type == CJ_ARRAY && !top->start) {
-        fprintf(cj->sink, ",");
+    if (top->type == CJ_ARRAY) {
+        if (!top->start) {
+            cj->write(cj->sink, ",");
+        } else {
+            top->start = false;
+        }
     }
 
-    fprintf(cj->sink, "\"%.*s\"", (int)n, cstr);
+    cj->write(cj->sink, "\"%.*s\"", (int)n, cstr);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
@@ -215,13 +252,13 @@ void cj_number(CJ* cj, long long int n) {
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
-            fprintf(cj->sink, ",");
+            cj->write(cj->sink, ",");
         } else {
             top->start = false;
         }
     }
 
-    fprintf(cj->sink, "%lld", n);
+    cj->write(cj->sink, "%lld", n);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
@@ -233,13 +270,13 @@ void cj_float(CJ* cj, long double f, size_t precision) {
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
-            fprintf(cj->sink, ",");
+            cj->write(cj->sink, ",");
         } else {
             top->start = false;
         }
     }
 
-    fprintf(cj->sink, "%.*Lf", (int)precision, f);
+    cj->write(cj->sink, "%.*Lf", (int)precision, f);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
@@ -251,13 +288,13 @@ void cj_null(CJ* cj) {
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
-            fprintf(cj->sink, ",");
+            cj->write(cj->sink, ",");
         } else {
             top->start = false;
         }
     }
 
-    fprintf(cj->sink, "null");
+    cj->write(cj->sink, "null");
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
