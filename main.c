@@ -31,9 +31,10 @@ int main(void) {
         { "Joe", 12 },
         { "Urmom", 122 },
         { "John", 22 },
+        { "Jill", 52 },
     };
 
-    dump_people(cj, 3, people);
+    dump_people(cj, 4, people);
 
     cj_delete(cj);
     return 0;
