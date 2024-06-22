@@ -55,6 +55,7 @@ void cj_null(CJ* cj);
 
 #ifdef CJ_IMPLEMENTATION
 #include <assert.h>
+#include <string.h>
 
 typedef enum {
     CJ_OBJECT,
@@ -222,14 +223,41 @@ void cj_string(CJ* cj, const char* cstr) {
         }
     }
 
-    cj->write(cj->sink, "\"%s\"", cstr);
+    size_t len = strlen(cstr);
+    char buf[len * 2] = {};
+    memset(buf, 0, len * 2);
+    size_t buf_len = 0;
+    for (size_t i = 0; buf_len < len * 2 && i < len; ++i) {
+        switch (cstr[i]) {
+            case '\n':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 'n';
+                break;
+            case '"':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = '"';
+                break;
+            case '\t':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 't';
+                break;
+            case '\r':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 'r';
+                break;
+            default:
+                buf[buf_len++] = cstr[i];
+                break;
+        }
+    }
+    cj->write(cj->sink, "\"%s\"", buf);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
     }
 }
 
-void cj_string_sized(CJ* cj, size_t n, const char cstr[n]) {
+void cj_string_sized(CJ* cj, size_t len, const char cstr[n]) {
     CJScope* top = cj_scope_top(cj);
 
     if (top->type == CJ_ARRAY) {
@@ -240,7 +268,33 @@ void cj_string_sized(CJ* cj, size_t n, const char cstr[n]) {
         }
     }
 
-    cj->write(cj->sink, "\"%.*s\"", (int)n, cstr);
+    char buf[len * 2] = {};
+    memset(buf, 0, len * 2);
+    size_t buf_len = 0;
+    for (size_t i = 0; buf_len < len * 2 && i < len; ++i) {
+        switch (cstr[i]) {
+            case '\n':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 'n';
+                break;
+            case '"':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = '"';
+                break;
+            case '\t':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 't';
+                break;
+            case '\r':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = 'r';
+                break;
+            default:
+                buf[buf_len++] = cstr[i];
+                break;
+        }
+    }
+    cj->write(cj->sink, "\"%s\"", buf);
 
     if (top->type == CJ_OBJECT) {
         top->key = false;
