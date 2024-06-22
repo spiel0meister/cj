@@ -245,6 +245,10 @@ void cj_string(CJ* cj, const char* cstr) {
                 buf[buf_len++] = '\\';
                 buf[buf_len++] = 'r';
                 break;
+            case '\\':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = '\\';
+                break;
             default:
                 buf[buf_len++] = cstr[i];
                 break;
@@ -288,6 +292,10 @@ void cj_string_sized(CJ* cj, size_t len, const char cstr[n]) {
             case '\r':
                 buf[buf_len++] = '\\';
                 buf[buf_len++] = 'r';
+                break;
+            case '\\':
+                buf[buf_len++] = '\\';
+                buf[buf_len++] = '\\';
                 break;
             default:
                 buf[buf_len++] = cstr[i];
