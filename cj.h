@@ -42,10 +42,10 @@ void cj_begin_array(CJ* cj);
 void cj_end_array(CJ* cj);
 
 void cj_key(CJ* cj, const char* cstr);
-void cj_key_sized(CJ* cj, size_t n, const char cstr[n]);
+void cj_key_sized(CJ* cj, size_t len, const char cstr[len]);
 
 void cj_string(CJ* cj, const char* cstr);
-void cj_string_sized(CJ* cj, size_t n, const char cstr[n]);
+void cj_string_sized(CJ* cj, size_t len, const char cstr[len]);
 void cj_number(CJ* cj, long long int n);
 void cj_float(CJ* cj, long double f, size_t precision);
 void cj_bool(CJ* cj, bool bol);
@@ -171,7 +171,7 @@ void cj_key(CJ* cj, const char* cstr) {
     top->key = true;
 }
 
-void cj_key_sized(CJ* cj, size_t n, const char cstr[n]) {
+void cj_key_sized(CJ* cj, size_t len, const char cstr[len]) {
     CJScope* top = cj_scope_top(cj);
     assert(top->type == CJ_OBJECT);
     assert(!top->key);
@@ -182,7 +182,7 @@ void cj_key_sized(CJ* cj, size_t n, const char cstr[n]) {
         top->start = false;
     }
 
-    cj->write(cj->sink, "\"%.*s\"", (int)n, cstr);
+    cj->write(cj->sink, "\"%.*s\"", (int)len, cstr);
 
     if (top->type == CJ_OBJECT) {
         cj->write(cj->sink, ":");
@@ -261,7 +261,7 @@ void cj_string(CJ* cj, const char* cstr) {
     }
 }
 
-void cj_string_sized(CJ* cj, size_t len, const char cstr[n]) {
+void cj_string_sized(CJ* cj, size_t len, const char cstr[len]) {
     CJScope* top = cj_scope_top(cj);
 
     if (top->type == CJ_ARRAY) {
