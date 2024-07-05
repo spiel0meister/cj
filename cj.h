@@ -36,20 +36,22 @@ typedef struct CJ CJ;
 CJ* cj_new(FILE* sink, CJ_write_t write);
 void cj_delete(CJ* cj);
 
-void cj_begin_object(CJ* cj);
-void cj_end_object(CJ* cj);
-void cj_begin_array(CJ* cj);
-void cj_end_array(CJ* cj);
+const char* cj_get_error(const CJ* cj);
 
-void cj_key(CJ* cj, const char* cstr);
-void cj_key_sized(CJ* cj, size_t len, const char cstr[len]);
+bool cj_begin_object(CJ* cj);
+bool cj_end_object(CJ* cj);
+bool cj_begin_array(CJ* cj);
+bool cj_end_array(CJ* cj);
 
-void cj_string(CJ* cj, const char* cstr);
-void cj_string_sized(CJ* cj, size_t len, const char cstr[len]);
-void cj_number(CJ* cj, long long int n);
-void cj_float(CJ* cj, long double f, size_t precision);
-void cj_bool(CJ* cj, bool bol);
-void cj_null(CJ* cj);
+bool cj_key(CJ* cj, const char* cstr);
+bool cj_key_sized(CJ* cj, size_t len, const char cstr[len]);
+
+bool cj_string(CJ* cj, const char* cstr);
+bool cj_string_sized(CJ* cj, size_t len, const char cstr[len]);
+bool cj_number(CJ* cj, long long int n);
+bool cj_float(CJ* cj, long double f, size_t precision);
+bool cj_bool(CJ* cj, bool bol);
+bool cj_null(CJ* cj);
 
 #endif // CJ_H
 
@@ -62,6 +64,13 @@ typedef enum {
     CJ_ARRAY
 }CJScopeType;
 
+typedef enum {
+    CJ_SUCCESS,
+    CJ_SYNTAX_ERROR,
+    CJ_SCOPE_OVERFLOW,
+    CJ_SCOPE_UNDERFLOW
+}CJResult;
+
 typedef struct {
     CJScopeType type;
     bool start;
@@ -72,13 +81,44 @@ struct CJ {
     FILE* sink;
     CJ_write_t write;
 
+    CJResult result;
     CJScope scopes[CJ_MAX_SCOPES];
     size_t scope_count;
 };
 
+const char* cj_get_error(const CJ* cj) {
+    switch (cj->result) {
+        case CJ_SYNTAX_ERROR: return "Syntax error";
+        case CJ_SCOPE_OVERFLOW: return "Scope overflow";
+        case CJ_SCOPE_UNDERFLOW: return "Scope underflow";
+        case CJ_SUCCESS: return "No error";
+        default: assert(0);
+    }
+}
+
 static CJScope* cj_scope_top(CJ* cj) {
-    assert(cj->scope_count > 0);
+    if (cj->scope_count == 0) {
+        cj->result = CJ_SCOPE_UNDERFLOW;
+        return NULL;
+    }
+
     return &cj->scopes[cj->scope_count - 1];
+}
+
+static bool cj_maybe_object_key_remove(CJ* cj, CJScope* scope) {
+    if (scope->type == CJ_OBJECT) {
+        if (!scope->key) {
+            cj->result = CJ_SYNTAX_ERROR;
+            return false;
+        }
+        scope->key = false;
+    }
+
+    return true;
+}
+
+static bool cj_has_error(const CJ* cj) {
+    return cj->result != CJ_SUCCESS;
 }
 
 CJ* cj_new(FILE* sink, CJ_write_t write) {
@@ -92,12 +132,24 @@ void cj_delete(CJ* cj) {
     free(cj);
 }
 
-void cj_begin_object(CJ* cj) {
-    assert(cj->scope_count < CJ_MAX_SCOPES);
+bool cj_begin_object(CJ* cj) {
+    if (cj_has_error(cj)) return false;
+
+    if (cj->scope_count >= CJ_MAX_SCOPES) {
+        cj->result = CJ_SCOPE_OVERFLOW;
+        return false;
+    }
     
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
-        if (top->type == CJ_OBJECT) assert(top->key);
+        assert(top != NULL);
+
+        if (top->type == CJ_OBJECT) {
+            if (!top->key) {
+                cj->result = CJ_SYNTAX_ERROR;
+                return false;
+            }
+        }
         else if (top->type == CJ_ARRAY) {
             if (!top->start) cj->write(cj->sink, ",");
             else top->start = false;
@@ -107,30 +159,51 @@ void cj_begin_object(CJ* cj) {
 
     cj->write(cj->sink, "{");
     cj->scopes[cj->scope_count++] = (CJScope) { .type = CJ_OBJECT, .start = true, .key = false };
+
+    return true;
 }
 
-void cj_end_object(CJ* cj) {
-    CJScope* top = cj_scope_top(cj);
-    assert(top->type == CJ_OBJECT);
-    cj->scope_count--;
+bool cj_end_object(CJ* cj) {
+    if (cj_has_error(cj)) return false;
 
+    CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
+    if (top->type != CJ_OBJECT) {
+        cj->result = CJ_SYNTAX_ERROR;
+        return false;
+    }
+
+    cj->scope_count--;
     cj->write(cj->sink, "}");
 
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
-        if (top->type == CJ_OBJECT) {
-            top->key = false;
-        }
+        assert(top != NULL);
+
+        if (!cj_maybe_object_key_remove(cj, top)) return false;
     }
+
+    return true;
 }
 
-void cj_begin_array(CJ* cj) {
-    assert(cj->scope_count < CJ_MAX_SCOPES);
+bool cj_begin_array(CJ* cj) {
+    if (cj_has_error(cj)) return false;
+
+    if (cj->scope_count >= CJ_MAX_SCOPES) {
+        cj->result = CJ_SCOPE_OVERFLOW;
+        return false;
+    }
 
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
-        if (top->type == CJ_OBJECT) assert(top->key);
-        else if (top->type == CJ_ARRAY) {
+        assert(top != NULL);
+
+        if (top->type == CJ_OBJECT) {
+            if (!top->key) {
+                cj->result = CJ_SYNTAX_ERROR;
+                return false;
+            }
+        } else if (top->type == CJ_ARRAY) {
             if (!top->start) cj->write(cj->sink, ",");
             else top->start = false;
         }
@@ -139,27 +212,43 @@ void cj_begin_array(CJ* cj) {
 
     cj->write(cj->sink, "[");
     cj->scopes[cj->scope_count++] = (CJScope) { .type = CJ_ARRAY, .start = true, .key = false };
+
+    return true;
 }
 
-void cj_end_array(CJ* cj) {
+bool cj_end_array(CJ* cj) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
-    assert(top->type == CJ_ARRAY);
+    if (top == NULL) return false;
+    else if (top->type != CJ_ARRAY) {
+        cj->result = CJ_SYNTAX_ERROR;
+        return false;
+    }
 
     cj->write(cj->sink, "]");
     cj->scope_count--;
 
     if (cj->scope_count > 0) {
         CJScope* top = cj_scope_top(cj);
+        assert(top != NULL);
         if (top->type == CJ_OBJECT) {
-            top->key = false;
+            if (!cj_maybe_object_key_remove(cj, top)) return false;
         }
     }
+    
+    return true;
 }
 
-void cj_key(CJ* cj, const char* cstr) {
+bool cj_key(CJ* cj, const char* cstr) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
-    assert(top->type == CJ_OBJECT);
-    assert(!top->key);
+    if (top == NULL) return false;
+    else if (top->type != CJ_OBJECT || top->key) {
+        cj->result = CJ_SYNTAX_ERROR;
+        return false;
+    }
 
     if (!top->start) {
         cj->write(cj->sink, ",");
@@ -169,12 +258,19 @@ void cj_key(CJ* cj, const char* cstr) {
 
     cj->write(cj->sink, "\"%s\":", cstr);
     top->key = true;
+
+    return true;
 }
 
-void cj_key_sized(CJ* cj, size_t len, const char cstr[len]) {
+bool cj_key_sized(CJ* cj, size_t len, const char cstr[len]) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
-    assert(top->type == CJ_OBJECT);
-    assert(!top->key);
+    if (top == NULL) return false;
+    else if (top->type != CJ_OBJECT || top->key) {
+        cj->result = CJ_SYNTAX_ERROR;
+        return false;
+    }
 
     if (!top->start) {
         cj->write(cj->sink, ",");
@@ -188,10 +284,15 @@ void cj_key_sized(CJ* cj, size_t len, const char cstr[len]) {
         cj->write(cj->sink, ":");
         top->key = true;
     }
+
+    return true;
 }
 
-void cj_bool(CJ* cj, bool bol) {
+bool cj_bool(CJ* cj, bool bol) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -207,13 +308,16 @@ void cj_bool(CJ* cj, bool bol) {
         cj->write(cj->sink, "false");
     }
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
+
+    return true;
 }
 
-void cj_string(CJ* cj, const char* cstr) {
+bool cj_string(CJ* cj, const char* cstr) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -222,6 +326,7 @@ void cj_string(CJ* cj, const char* cstr) {
             top->start = false;
         }
     }
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
 
     size_t len = strlen(cstr);
     char buf[len * 2] = {};
@@ -256,13 +361,14 @@ void cj_string(CJ* cj, const char* cstr) {
     }
     cj->write(cj->sink, "\"%s\"", buf);
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
+    return true;
 }
 
-void cj_string_sized(CJ* cj, size_t len, const char cstr[len]) {
+bool cj_string_sized(CJ* cj, size_t len, const char cstr[len]) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -304,13 +410,16 @@ void cj_string_sized(CJ* cj, size_t len, const char cstr[len]) {
     }
     cj->write(cj->sink, "\"%s\"", buf);
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
+
+    return true;
 }
 
-void cj_number(CJ* cj, long long int n) {
+bool cj_number(CJ* cj, long long int n) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -322,13 +431,16 @@ void cj_number(CJ* cj, long long int n) {
 
     cj->write(cj->sink, "%lld", n);
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
+
+    return true;
 }
 
-void cj_float(CJ* cj, long double f, size_t precision) {
+bool cj_float(CJ* cj, long double f, size_t precision) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) return false;
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -340,13 +452,19 @@ void cj_float(CJ* cj, long double f, size_t precision) {
 
     cj->write(cj->sink, "%.*Lf", (int)precision, f);
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
+
+    return true;
 }
 
-void cj_null(CJ* cj) {
+bool cj_null(CJ* cj) {
+    if (cj_has_error(cj)) return false;
+
     CJScope* top = cj_scope_top(cj);
+    if (top == NULL) {
+        cj->result = CJ_SCOPE_UNDERFLOW;
+        return false;
+    }
 
     if (top->type == CJ_ARRAY) {
         if (!top->start) {
@@ -358,10 +476,9 @@ void cj_null(CJ* cj) {
 
     cj->write(cj->sink, "null");
 
-    if (top->type == CJ_OBJECT) {
-        top->key = false;
-    }
-}
+    if (!cj_maybe_object_key_remove(cj, top)) return false;
 
+    return true;
+}
 
 #endif
