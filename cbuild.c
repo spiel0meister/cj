@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
     const char* cflags[] = STRS_LIT("-Wall", "-Wextra", "-ggdb");
     build_yourself(&cmd, argc, argv);
 
-    if (!cmd_maybe_build_c(&cmd, CC_GCC, "cj", STRS("main.c"), cflags)) return 1;
+    if (!cmd_maybe_build_c(&cmd, CC_GCC, "cj", STRS("main.c", "cj.h"), cflags)) return 1;
 
     return 0;
 }

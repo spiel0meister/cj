@@ -21,6 +21,7 @@ void dump_people(CJ* cj, size_t n, Person people[n]) {
 
         cj_end_object(cj);
     }
+
     cj_end_array(cj);
 }
 
